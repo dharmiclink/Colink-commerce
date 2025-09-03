@@ -1,0 +1,867 @@
+// This is the Prisma schema file for CoLink Commerce platform
+// It defines all database models, relationships, and constraints
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===== Core Identity Models =====
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  name              String?
+  avatar            String?
+  phone             String?
+  password          String?   // Hashed password (if not using Clerk/Auth0)
+  externalId        String?   // External ID from auth provider (Clerk/Auth0)
+  externalProvider  String?   // "clerk" or "auth0"
+  isActive          Boolean   @default(true)
+  isEmailVerified   Boolean   @default(false)
+  isPhoneVerified   Boolean   @default(false)
+  preferredLanguage String    @default("en") // en, ms, id, tl, th
+  timezone          String    @default("UTC")
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  organizations      UserOrganization[]
+  sellerProfile      SellerProfile?
+  creatorProfile     CreatorProfile?
+  campaigns          Campaign[]
+  notifications      Notification[]
+  badges             UserBadge[]
+  tier               Tier?               @relation(fields: [tierId], references: [id])
+  tierId             String?
+  referredBy         Referral?           @relation("ReferredUser", fields: [referredById], references: [id])
+  referredById       String?
+  referrals          Referral[]          @relation("ReferringUser")
+  leaderboardEntries LeaderboardEntry[]
+  auditLogs          AuditLog[]
+  webhookSubscriptions WebhookSubscription[]
+  clickEvents        ClickEvent[]
+  viewEvents         ViewEvent[]
+
+  @@index([email])
+  @@index([externalId, externalProvider])
+  @@map("users")
+}
+
+model Organization {
+  id                String   @id @default(cuid())
+  name              String
+  slug              String   @unique
+  logo              String?
+  website           String?
+  description       String?
+  country           String
+  currency          String   @default("USD") // USD, MYR, IDR, PHP, THB
+  taxId             String?
+  isVerified        Boolean  @default(false)
+  verificationDate  DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  users              UserOrganization[]
+  storeConnections   StoreConnection[]
+  products           Product[]
+  campaigns          Campaign[]
+  commissionRules    CommissionRule[]
+  orders             Order[]
+  paymentIntents     PaymentIntent[]
+  payouts            Payout[]
+  ledgerEntries      LedgerEntry[]
+  trackingLinks      TrackingLink[]
+  featureFlags       OrganizationFeatureFlag[]
+  webhookSubscriptions WebhookSubscription[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  permissions String[] // Array of permission strings
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  userOrganizations UserOrganization[]
+
+  @@map("roles")
+}
+
+model UserOrganization {
+  id             String       @id @default(cuid())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  role           Role         @relation(fields: [roleId], references: [id])
+  roleId         String
+  isDefault      Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@map("user_organizations")
+}
+
+// ===== Profile Models =====
+
+model SellerProfile {
+  id                 String   @id @default(cuid())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String   @unique
+  businessName       String
+  businessType       String   // Individual, Company, Partnership
+  businessAddress    String?
+  businessCity       String?
+  businessState      String?
+  businessPostalCode String?
+  businessCountry    String
+  taxIdentifier      String?
+  bankName           String?
+  bankAccountNumber  String?  @db.Text // Encrypted
+  bankAccountName    String?
+  bankSwiftCode      String?
+  stripeConnectId    String?
+  xenditAccountId    String?
+  paymentDetails     Json?    // Additional payment details as JSON
+  isVerified         Boolean  @default(false)
+  verificationDate   DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId])
+  @@map("seller_profiles")
+}
+
+model CreatorProfile {
+  id                  String   @id @default(cuid())
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              String   @unique
+  displayName         String
+  bio                 String?  @db.Text
+  profileImage        String?
+  coverImage          String?
+  socialLinks         Json?    // JSON array of social media links
+  niches              String[] // Array of niche categories
+  preferredCategories String[] // Product categories of interest
+  bankName            String?
+  bankAccountNumber   String?  @db.Text // Encrypted
+  bankAccountName     String?
+  bankSwiftCode       String?
+  stripeConnectId     String?
+  xenditAccountId     String?
+  paymentDetails      Json?    // Additional payment details as JSON
+  isVerified          Boolean  @default(false)
+  verificationDate    DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+  @@map("creator_profiles")
+}
+
+// ===== Integration Models =====
+
+model StoreConnection {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  platform       String       // SHOPEE, LAZADA, SHOPIFY, WOOCOMMERCE
+  name           String       // Store name
+  accessToken    String       @db.Text // Encrypted
+  refreshToken   String?      @db.Text // Encrypted
+  tokenExpiresAt DateTime?
+  storeId        String       // External store ID
+  storeUrl       String?
+  metadata       Json?        // Additional platform-specific data
+  isActive       Boolean      @default(true)
+  lastSyncAt     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // Relations
+  products         Product[]
+  inventorySnapshots InventorySnapshot[]
+  orders           Order[]
+
+  @@unique([organizationId, platform, storeId])
+  @@index([organizationId])
+  @@index([platform, storeId])
+  @@map("store_connections")
+}
+
+// ===== Product Models =====
+
+model Product {
+  id                String       @id @default(cuid())
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId    String
+  storeConnection   StoreConnection @relation(fields: [storeConnectionId], references: [id])
+  storeConnectionId String
+  externalId        String       // ID from external platform
+  name              String
+  description       String?      @db.Text
+  brand             String?
+  category          String?
+  images            String[]     // Array of image URLs
+  url               String?
+  isActive          Boolean      @default(true)
+  isDeleted         Boolean      @default(false)
+  metadata          Json?        // Additional platform-specific data
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  skus              SKU[]
+  campaignProducts  CampaignProduct[]
+  commissionRules   CommissionRule[]
+  inventorySnapshots InventorySnapshot[]
+
+  @@unique([storeConnectionId, externalId])
+  @@index([organizationId])
+  @@index([storeConnectionId])
+  @@map("products")
+}
+
+model SKU {
+  id              String   @id @default(cuid())
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId       String
+  externalId      String   // SKU ID from external platform
+  sku             String   // SKU code
+  barcode         String?  // Barcode/UPC/EAN
+  name            String?  // Variant name
+  options         Json?    // Variant options (color, size, etc.)
+  price           Decimal  @db.Decimal(10, 2)
+  compareAtPrice  Decimal? @db.Decimal(10, 2)
+  currency        String   @default("USD") // USD, MYR, IDR, PHP, THB
+  weight          Decimal? @db.Decimal(10, 2)
+  weightUnit      String?  // g, kg, oz, lb
+  dimensions      Json?    // {length, width, height, unit}
+  isActive        Boolean  @default(true)
+  isDeleted       Boolean  @default(false)
+  metadata        Json?    // Additional platform-specific data
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  orderItems         OrderItem[]
+  inventorySnapshots InventorySnapshot[]
+  commissionRules    CommissionRule[]
+
+  @@unique([productId, externalId])
+  @@index([productId])
+  @@index([sku])
+  @@map("skus")
+}
+
+model InventorySnapshot {
+  id                String          @id @default(cuid())
+  storeConnection   StoreConnection @relation(fields: [storeConnectionId], references: [id])
+  storeConnectionId String
+  product           Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId         String
+  sku               SKU?            @relation(fields: [skuId], references: [id])
+  skuId             String?
+  quantity          Int
+  reservedQuantity  Int             @default(0)
+  snapshotDate      DateTime        @default(now())
+  createdAt         DateTime        @default(now())
+
+  @@index([storeConnectionId])
+  @@index([productId])
+  @@index([skuId])
+  @@index([snapshotDate])
+  @@map("inventory_snapshots")
+}
+
+// ===== Campaign Models =====
+
+model Campaign {
+  id                String       @id @default(cuid())
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  creator           User         @relation(fields: [creatorId], references: [id])
+  creatorId         String
+  name              String
+  slug              String
+  description       String?      @db.Text
+  startDate         DateTime?
+  endDate           DateTime?
+  isActive          Boolean      @default(true)
+  isPublished       Boolean      @default(false)
+  publishedAt       DateTime?
+  vanityUrl         String?      @unique // /c/{creator}/{campaign}
+  layout            String       @default("DEFAULT") // DEFAULT, GRID, LIST, CAROUSEL
+  theme             String       @default("DEFAULT") // DEFAULT, LIGHT, DARK, CUSTOM
+  customCss         String?      @db.Text
+  customJs          String?      @db.Text
+  clickAttributionWindow Int     @default(7) // Days
+  viewAttributionWindow  Int     @default(1) // Days
+  attributionModel  String       @default("LAST_TOUCH") // LAST_TOUCH, TIME_DECAY
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  campaignProducts  CampaignProduct[]
+  commissionRules   CommissionRule[]
+  trackingLinks     TrackingLink[]
+  clickEvents       ClickEvent[]
+  viewEvents        ViewEvent[]
+  conversionEvents  ConversionEvent[]
+  leaderboardEntries LeaderboardEntry[]
+
+  @@unique([organizationId, slug])
+  @@unique([creatorId, slug])
+  @@index([organizationId])
+  @@index([creatorId])
+  @@index([slug])
+  @@map("campaigns")
+}
+
+model CampaignProduct {
+  id          String   @id @default(cuid())
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId  String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId   String
+  displayOrder Int      @default(0)
+  isActive    Boolean  @default(true)
+  customTitle String?
+  customDescription String? @db.Text
+  customImage String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([campaignId, productId])
+  @@index([campaignId])
+  @@index([productId])
+  @@map("campaign_products")
+}
+
+// ===== Commission Models =====
+
+model CommissionRule {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  name           String
+  description    String?
+  type           String       // DEFAULT, PRODUCT, SKU, CAMPAIGN
+  product        Product?     @relation(fields: [productId], references: [id])
+  productId      String?
+  sku            SKU?         @relation(fields: [skuId], references: [id])
+  skuId          String?
+  campaign       Campaign?    @relation(fields: [campaignId], references: [id])
+  campaignId     String?
+  creatorPercent Decimal      @db.Decimal(5, 2) // e.g., 15.00 for 15%
+  platformFeePercent Decimal  @db.Decimal(5, 2) // e.g., 5.00 for 5%
+  minCommission  Decimal?     @db.Decimal(10, 2)
+  maxCommission  Decimal?     @db.Decimal(10, 2)
+  currency       String       @default("USD") // USD, MYR, IDR, PHP, THB
+  isActive       Boolean      @default(true)
+  startDate      DateTime?
+  endDate        DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([productId])
+  @@index([skuId])
+  @@index([campaignId])
+  @@index([type])
+  @@map("commission_rules")
+}
+
+// ===== Order Models =====
+
+model Order {
+  id                String          @id @default(cuid())
+  organization      Organization    @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  storeConnection   StoreConnection @relation(fields: [storeConnectionId], references: [id])
+  storeConnectionId String
+  externalId        String          // Order ID from external platform
+  externalCreatedAt DateTime
+  customerEmail     String?
+  customerName      String?
+  customerPhone     String?
+  currency          String
+  subtotal          Decimal         @db.Decimal(10, 2)
+  shipping          Decimal         @db.Decimal(10, 2)
+  tax               Decimal         @db.Decimal(10, 2)
+  discount          Decimal         @db.Decimal(10, 2)
+  total             Decimal         @db.Decimal(10, 2)
+  status            String          // PENDING, PAID, FULFILLED, CANCELLED, REFUNDED
+  paymentMethod     String?
+  shippingAddress   Json?
+  billingAddress    Json?
+  notes             String?         @db.Text
+  metadata          Json?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Relations
+  orderItems       OrderItem[]
+  paymentIntent    PaymentIntent?
+  conversionEvents ConversionEvent[]
+  ledgerEntries    LedgerEntry[]
+
+  @@unique([storeConnectionId, externalId])
+  @@index([organizationId])
+  @@index([storeConnectionId])
+  @@index([externalCreatedAt])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String
+  sku         SKU      @relation(fields: [skuId], references: [id])
+  skuId       String
+  externalId  String?  // Line item ID from external platform
+  name        String
+  quantity    Int
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  subtotal    Decimal  @db.Decimal(10, 2)
+  discount    Decimal  @db.Decimal(10, 2) @default(0)
+  tax         Decimal  @db.Decimal(10, 2) @default(0)
+  total       Decimal  @db.Decimal(10, 2)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  ledgerEntries LedgerEntry[]
+  conversionEvents ConversionEvent[]
+
+  @@index([orderId])
+  @@index([skuId])
+  @@map("order_items")
+}
+
+// ===== Financial Models =====
+
+model PaymentIntent {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  order          Order        @relation(fields: [orderId], references: [id])
+  orderId        String       @unique
+  provider       String       // STRIPE, XENDIT, DUITNOW, OTHER
+  externalId     String?      // ID from payment provider
+  amount         Decimal      @db.Decimal(10, 2)
+  currency       String
+  status         String       // PENDING, SUCCEEDED, FAILED, CANCELLED
+  paymentMethod  String?
+  paymentFee     Decimal      @db.Decimal(10, 2) @default(0)
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([externalId])
+  @@index([status])
+  @@map("payment_intents")
+}
+
+model Payout {
+  id                String       @id @default(cuid())
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  recipient         String       // User ID or external recipient ID
+  recipientType     String       // USER, EXTERNAL
+  provider          String       // STRIPE, XENDIT, DUITNOW, BANK_TRANSFER, OTHER
+  externalId        String?      // ID from payment provider
+  amount            Decimal      @db.Decimal(10, 2)
+  fee               Decimal      @db.Decimal(10, 2) @default(0)
+  currency          String
+  status            String       // PENDING, PROCESSING, SUCCEEDED, FAILED, CANCELLED
+  description       String?
+  bankName          String?
+  bankAccountNumber String?      @db.Text // Encrypted
+  bankAccountName   String?
+  bankSwiftCode     String?
+  reference         String?      // Reference number
+  scheduledDate     DateTime?
+  processedDate     DateTime?
+  metadata          Json?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  ledgerEntries    LedgerEntry[]
+
+  @@index([organizationId])
+  @@index([recipient, recipientType])
+  @@index([externalId])
+  @@index([status])
+  @@index([scheduledDate])
+  @@map("payouts")
+}
+
+model LedgerEntry {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  order          Order?       @relation(fields: [orderId], references: [id])
+  orderId        String?
+  orderItem      OrderItem?   @relation(fields: [orderItemId], references: [id])
+  orderItemId    String?
+  payout         Payout?      @relation(fields: [payoutId], references: [id])
+  payoutId       String?
+  entryType      String       // SALE, COMMISSION, PLATFORM_FEE, PAYMENT_FEE, PAYOUT, REFUND, ADJUSTMENT
+  amount         Decimal      @db.Decimal(10, 2)
+  currency       String
+  description    String?
+  status         String       // RESERVED, CLEARED, PAID, CANCELLED
+  clearedAt      DateTime?
+  paidAt         DateTime?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([payoutId])
+  @@index([entryType])
+  @@index([status])
+  @@map("ledger_entries")
+}
+
+// ===== Attribution Models =====
+
+model TrackingLink {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  campaign       Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId     String
+  shortCode      String       @unique
+  url            String       @db.Text
+  utmSource      String?
+  utmMedium      String?
+  utmCampaign    String?
+  utmContent     String?
+  utmTerm        String?
+  qrCodeUrl      String?
+  isActive       Boolean      @default(true)
+  expiresAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // Relations
+  clickEvents    ClickEvent[]
+  viewEvents     ViewEvent[]
+
+  @@index([organizationId])
+  @@index([campaignId])
+  @@index([shortCode])
+  @@map("tracking_links")
+}
+
+model ClickEvent {
+  id             String        @id @default(cuid())
+  trackingLink   TrackingLink? @relation(fields: [trackingLinkId], references: [id])
+  trackingLinkId String?
+  campaign       Campaign?     @relation(fields: [campaignId], references: [id])
+  campaignId     String?
+  user           User?         @relation(fields: [userId], references: [id])
+  userId         String?
+  ip             String?       @db.Text // Encrypted
+  userAgent      String?
+  referrer       String?
+  device         String?
+  browser        String?
+  os             String?
+  country        String?
+  region         String?
+  city           String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  @@index([trackingLinkId])
+  @@index([campaignId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("click_events")
+}
+
+model ViewEvent {
+  id             String        @id @default(cuid())
+  trackingLink   TrackingLink? @relation(fields: [trackingLinkId], references: [id])
+  trackingLinkId String?
+  campaign       Campaign?     @relation(fields: [campaignId], references: [id])
+  campaignId     String?
+  user           User?         @relation(fields: [userId], references: [id])
+  userId         String?
+  ip             String?       @db.Text // Encrypted
+  userAgent      String?
+  referrer       String?
+  device         String?
+  browser        String?
+  os             String?
+  country        String?
+  region         String?
+  city           String?
+  duration       Int?          // View duration in seconds
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  @@index([trackingLinkId])
+  @@index([campaignId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("view_events")
+}
+
+model ConversionEvent {
+  id             String     @id @default(cuid())
+  campaign       Campaign   @relation(fields: [campaignId], references: [id])
+  campaignId     String
+  order          Order      @relation(fields: [orderId], references: [id])
+  orderId        String
+  orderItem      OrderItem? @relation(fields: [orderItemId], references: [id])
+  orderItemId    String?
+  conversionType String     // PURCHASE, ADD_TO_CART, WISHLIST
+  attributionSource String  // CLICK, VIEW, DIRECT
+  attributionModel String   // LAST_TOUCH, TIME_DECAY
+  clickEventId   String?
+  viewEventId    String?
+  metadata       Json?
+  createdAt      DateTime   @default(now())
+
+  @@index([campaignId])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([clickEventId])
+  @@index([viewEventId])
+  @@map("conversion_events")
+}
+
+// ===== Referral Models =====
+
+model Referral {
+  id             String    @id @default(cuid())
+  referringUser  User      @relation("ReferringUser", fields: [referringUserId], references: [id])
+  referringUserId String
+  referredUser   User?     @relation("ReferredUser")
+  email          String?
+  code           String    @unique
+  status         String    // PENDING, COMPLETED, EXPIRED
+  completedAt    DateTime?
+  expiresAt      DateTime?
+  reward         Json?     // Reward details
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([referringUserId])
+  @@index([code])
+  @@index([email])
+  @@index([status])
+  @@map("referrals")
+}
+
+// ===== Gamification Models =====
+
+model Badge {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  imageUrl    String?
+  category    String   // SALES, ENGAGEMENT, ACHIEVEMENT
+  level       Int      @default(1)
+  criteria    Json?    // Criteria for earning the badge
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  userBadges  UserBadge[]
+
+  @@unique([name, level])
+  @@index([category])
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  badge     Badge    @relation(fields: [badgeId], references: [id])
+  badgeId   String
+  awardedAt DateTime @default(now())
+  metadata  Json?
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@index([badgeId])
+  @@map("user_badges")
+}
+
+model Tier {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  imageUrl    String?
+  level       Int      @unique
+  minSales    Decimal  @db.Decimal(10, 2)
+  benefits    Json?    // Benefits for this tier
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+
+  @@index([level])
+  @@map("tiers")
+}
+
+model LeaderboardEntry {
+  id             String     @id @default(cuid())
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  campaign       Campaign?  @relation(fields: [campaignId], references: [id])
+  campaignId     String?
+  period         String     // DAILY, WEEKLY, MONTHLY, ALL_TIME, CUSTOM
+  startDate      DateTime?
+  endDate        DateTime?
+  salesAmount    Decimal    @db.Decimal(10, 2)
+  ordersCount    Int
+  commissionAmount Decimal  @db.Decimal(10, 2)
+  conversionRate Decimal?   @db.Decimal(5, 2)
+  rank           Int?
+  metadata       Json?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([userId, campaignId, period, startDate, endDate])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([period])
+  @@index([startDate, endDate])
+  @@map("leaderboard_entries")
+}
+
+// ===== Communication Models =====
+
+model Notification {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  type      String   // INFO, SUCCESS, WARNING, ERROR
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  readAt    DateTime?
+  link      String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model WebhookSubscription {
+  id             String       @id @default(cuid())
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organizationId String?
+  user           User?        @relation(fields: [userId], references: [id])
+  userId         String?
+  name           String
+  url            String
+  secret         String?      @db.Text // Encrypted
+  events         String[]     // Array of event types to subscribe to
+  isActive       Boolean      @default(true)
+  lastTriggeredAt DateTime?
+  failureCount   Int          @default(0)
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("webhook_subscriptions")
+}
+
+// ===== Compliance Models =====
+
+model AuditLog {
+  id             String    @id @default(cuid())
+  user           User?     @relation(fields: [userId], references: [id])
+  userId         String?
+  action         String    // CREATE, READ, UPDATE, DELETE, LOGIN, LOGOUT, etc.
+  entityType     String    // User, Product, Order, etc.
+  entityId       String?
+  description    String?
+  ipAddress      String?   @db.Text // Encrypted
+  userAgent      String?
+  oldValues      Json?
+  newValues      Json?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ===== Feature Management Models =====
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isEnabled   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  organizationFeatureFlags OrganizationFeatureFlag[]
+
+  @@index([name])
+  @@map("feature_flags")
+}
+
+model OrganizationFeatureFlag {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  featureFlag    FeatureFlag  @relation(fields: [featureFlagId], references: [id], onDelete: Cascade)
+  featureFlagId  String
+  isEnabled      Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, featureFlagId])
+  @@index([organizationId])
+  @@index([featureFlagId])
+  @@map("organization_feature_flags")
+}
